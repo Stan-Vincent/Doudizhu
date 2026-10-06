@@ -46,27 +46,18 @@ bool LocalSession::startRound(quint32 seed)
     // TODO(candidate): 生成或接收种子，调用 Deck::shuffled 和 m_engine.startRound，
     // 转发成功事件，并在适用时接入已给出的 chaos 发牌逻辑和 AI 调度。
 
-    qDebug() << "[LocalSession] startRound called, seed =" << seed;   /// 新增
-
-    // 1. 生成种子（0 表示随机）
+    //生成种子,0 表示随机
     if (seed == 0) {
         seed = QRandomGenerator::global()->generate();
     }
-    qDebug() << "[LocalSession] effective seed =" << seed;            /// 新增
 
-    // 2. 确定性选择第一个叫地主的座位：按局数轮换，首局固定为座位 0。
-    //    不能随机——GameControlAdapter 把座位 0 固定映射为人类玩家，relay 服务器的
-    //    权威开局也固定 firstSeat=0；随机会导致人类玩家的叫分/出牌命令随机被
-    //    NotCurrentPlayer 拒绝（local_session_tests 的 "Session accepts user
-    //    commands" 间歇性失败正是这个原因）。
+    //选择第一个叫地主的座位：按局数轮换，首局固定为座位 0
     const int firstSeat = m_engine.state().roundNumber % kPlayerCount;
-    qDebug() << "[LocalSession] firstSeat =" << firstSeat;            /// 新增
 
-    // 3. 洗牌并发牌
+    //洗牌并发牌
     const CardList deck = Deck::shuffled(seed);
+
     CommandResult result = m_engine.startRound(deck, firstSeat);
-    qDebug() << "[LocalSession] engine.startRound accepted =" << result.accepted
-             << "error =" << static_cast<int>(result.error);          /// 新增
 
     if (!result.accepted) {
         qWarning() << "LocalSession::startRound: engine rejected startRound"
@@ -74,22 +65,18 @@ bool LocalSession::startRound(quint32 seed)
         return false;
     }
 
-    // 4. 转发发牌事件
-    qDebug() << "[LocalSession] events count =" << result.events.size();   /// 新增
+    //转发发牌事件
     processEvents(result.events);
 
-    // 5. 混沌模式：发牌后随机消牌
+    //混沌模式：发牌后随机消牌
     if (m_chaosActive && m_chaosDisappearOnDraw) {
         for (int seat = 0; seat < kPlayerCount; ++seat) {
             maybeVanishOnDeal(seat);
         }
     }
 
-    // 6. 若当前座位是 AI，启动 AI 决策
+    //若当前座位是 AI，启动 AI 决策
     const int current = m_engine.state().currentSeat;
-    qDebug() << "[LocalSession] after startRound phase ="
-             << static_cast<int>(m_engine.state().phase)
-             << "currentSeat =" << current;                             /// 新增
 
     if (isValidSeat(current) && m_playerTypes[current] == PlayerType::AI) {
         scheduleAIMove();
@@ -102,30 +89,27 @@ CommandResult LocalSession::executeCommand(const GameCommand &command)
 {
     // TODO(candidate): 拒绝外部控制 AI 座位；其余命令交给引擎，
     // 接受后转发事件并继续调度 AI。
-    (void)command;
 
-    qDebug() << "[LocalSession] executeCommand called, type =" << static_cast<int>(command.type)
-             << "seat =" << command.seat << "bid =" << command.bid;   // 新增
-
-    // 1. 外部只能控制 User 座位，且必须是当前行动座位
+    //外部只能控制玩家座位
     const int seat = command.seat;
+    // /座位合法
     if (!isValidSeat(seat))
         return CommandResult::rejected(GameError::InvalidSeat);
-
+    //外部只能控制玩家座位，
     if (m_playerTypes[seat] != PlayerType::User)
-        return CommandResult::rejected(GameError::InvalidPhase); // 不能控制 AI
-
+        return CommandResult::rejected(GameError::InvalidPhase);
+    //玩家座位是当前行动座位
     if (m_engine.state().currentSeat != seat)
         return CommandResult::rejected(GameError::NotCurrentPlayer);
 
-    // 2. 提交给引擎
+    //提交给引擎
     CommandResult result = m_engine.execute(command);
 
-    // 3. 若接受，转发事件并继续调度
+    //若接受，转发事件并继续调度
     if (result.accepted) {
         processEvents(result.events);
 
-        // 检查当前是否轮到 AI
+        //检查当前是否轮到 AI
         const int nextSeat = m_engine.state().currentSeat;
         if (isValidSeat(nextSeat) && m_playerTypes[nextSeat] == PlayerType::AI) {
             scheduleAIMove();
@@ -183,9 +167,10 @@ void LocalSession::processEvents(const QVector<GameEvent> &events)
 {
     // TODO(candidate): 逐个 emit eventEmitted；RoundFinished 额外 emit
     // roundFinished；RoundVoided 应延迟重新发牌，避免全员不叫后卡住。
-    (void)events;
 
+    //遍历事件列表
     for (const GameEvent &event : events) {
+
         if (event.type == GameEventType::RoundFinished) {
             // 延迟发送回合结束事件，避免 UI 在出牌动画未结束时清理动画目标
             const int winnerSeat = event.seat;
@@ -196,8 +181,10 @@ void LocalSession::processEvents(const QVector<GameEvent> &events)
             continue;
         }
 
+        //所有非RoundFinished的事件都在这里统一转发
         emit eventEmitted(event);
 
+        //全员不叫，本局作废
         if (event.type == GameEventType::RoundVoided) {
             QTimer::singleShot(0, this, [this]() {
                 startRound(0);
@@ -211,25 +198,27 @@ void LocalSession::scheduleAIMove()
     // TODO(candidate): 仅在 CallingLord / Playing 阶段且当前座位为 AI 时，
     // 用 QTimer 延迟 kAIMoveDelayMs 后调用 executeAIMove。
 
-    // 只在 AI 启用且当前座位是 AI 时调度
+    //检查是否AI执行
     if (!m_aiEnabled)
         return;
 
+    //只在当前座位是AI时调度
     const int seat = currentSeat();
     if (!isValidSeat(seat) || m_playerTypes[seat] != PlayerType::AI)
         return;
 
+    //只有两个阶段需要 AI：CallingLord：AI需要决定叫分、Playing：AI需要决定出牌或pass
     const GamePhase phase = currentPhase();
     if (phase != GamePhase::CallingLord && phase != GamePhase::Playing)
         return;
 
-    // 延迟后执行 AI 行动
+    // 延迟后执行 AI 行动(int kAIMoveDelayMs = 1200;)
     QTimer::singleShot(kAIMoveDelayMs, this, [this, seat]() {
-        // 再次检查条件，防止期间状态变化
-        if (currentSeat() == seat &&
-            m_playerTypes[seat] == PlayerType::AI &&
-            (currentPhase() == GamePhase::CallingLord ||
-             currentPhase() == GamePhase::Playing)) {
+        // 再次检查条件，防止延迟后状态变化
+        if (currentSeat() == seat
+            &&m_playerTypes[seat] == PlayerType::AI
+            &&(currentPhase() == GamePhase::CallingLord ||currentPhase() == GamePhase::Playing))
+        {
             executeAIMove(seat);
         }
     });
@@ -239,35 +228,20 @@ void LocalSession::executeAIMove(int seat)
 {
     // TODO(candidate): 调用 AIPolicy::performMove 执行一步 AI，
     // 接受后转发事件并继续调度；可保留与已给 chaos 逻辑的衔接。
-    (void)seat;
 
     if (!isValidSeat(seat) || m_playerTypes[seat] != PlayerType::AI)
         return;
 
-    // 调用 AIPolicy 执行一步（包含决策和兜底）
+    //调用 AIPolicy执行
     CommandResult result = AIPolicy::performMove(m_engine, seat);
 
     if (result.accepted) {
         processEvents(result.events);
 
-        // 继续调度下一个 AI（如果轮到）
+        //如果轮到的下一个为AI，继续调度下一个AI
         const int nextSeat = currentSeat();
         if (isValidSeat(nextSeat) && m_playerTypes[nextSeat] == PlayerType::AI) {
             scheduleAIMove();
-        }
-    } else {
-        qWarning() << "LocalSession::executeAIMove: AIPolicy move failed for seat"
-                   << seat << "error" << static_cast<int>(result.error);
-        // 理论上 AIPolicy 内部已兜底，不应到达此处；若到达，则尝试强制过牌避免卡死
-        if (currentPhase() == GamePhase::Playing) {
-            const CommandResult passResult = m_engine.execute(GameCommand::pass(seat));
-            if (passResult.accepted) {
-                processEvents(passResult.events);
-                const int nextSeat = currentSeat();
-                if (isValidSeat(nextSeat) && m_playerTypes[nextSeat] == PlayerType::AI) {
-                    scheduleAIMove();
-                }
-            }
         }
     }
 }

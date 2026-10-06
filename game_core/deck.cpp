@@ -9,7 +9,7 @@ CardList Deck::standard()
 {
     // TODO(candidate): 构造标准 54 张牌。
     CardList cards;
-    cards.reserve(54);
+    cards.reserve(54); //QVector
 
     //除了大小王以外的普通牌：3点~2点，每种点数4种花色
     for (int _pt = Card::Card_3; _pt <= Card::Card_2; ++_pt) {
@@ -31,9 +31,12 @@ CardList Deck::shuffled(quint32 seed)
 {
     // TODO(candidate): 以 seed 播种，对 standard() 结果进行确定性洗牌。
 
+    //先构造标准54张牌
     CardList cards = standard();
+
     //创建一个随机数生成器对象
     std::mt19937 rng(static_cast<unsigned int>(seed));
+
     std::shuffle(cards.begin(), cards.end(), rng);
     return cards;
 }
@@ -41,18 +44,21 @@ CardList Deck::shuffled(quint32 seed)
 bool Deck::isValid(const CardList &cards)
 {
     // TODO(candidate): 校验 cards 是否恰好是一副无重复、无非法牌面的标准牌。
-    (void)cards;
+
     if (cards.size() != 54)
         return false;
 
     //备份检查
-    CardList ckCards = cards;
-    //按照lessSort排序
-    std::sort(ckCards.begin(), ckCards.end(), lessSort);
+    CardList tempCards = cards;
 
-    //检查是否有重复
-    for (int i = 1; i < ckCards.size(); ++i) {
-        if (ckCards[i] == ckCards[i - 1])
+    //按照lessSort排序
+    //升序排序：先比点数，点数相同再比花色
+    //bool lessSort(const Card &c1, const Card &c2);
+    std::sort(tempCards.begin(), tempCards.end(), lessSort);
+
+    //排序后，检查是否有重复
+    for (int i = 1; i < tempCards.size(); ++i) {
+        if (tempCards[i] == tempCards[i - 1])
             return false;
     }
 
@@ -62,8 +68,6 @@ bool Deck::isValid(const CardList &cards)
         Card::CardSuit _suit = _card.getsuit();
 
         //点数必须在Card_3 ~ Card_BJ之间
-        if (_pt <= Card::Card_Begin || _pt >= Card::Card_End)
-            return false;
         if (_pt < Card::Card_3 || _pt > Card::Card_BJ)
             return false;
 
@@ -72,6 +76,7 @@ bool Deck::isValid(const CardList &cards)
             if (_suit != Card::Suit_Begin)
                 return false;
         }
+
         //普通牌的花色是四种花色之一
         else {
             if (_suit <= Card::Suit_Begin || _suit >= Card::Suit_End)
@@ -84,6 +89,7 @@ bool Deck::isValid(const CardList &cards)
 
     //统计王的数量必须各一张
     bool hasSJ = false, hasBJ = false;
+    //遍历寻找
     for (const Card &card : cards) {
         if (card.getpoint() == Card::Card_SJ) hasSJ = true;
         if (card.getpoint() == Card::Card_BJ) hasBJ = true;
